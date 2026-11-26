@@ -180,7 +180,7 @@ jobs:
       # push; HIGH findings are recorded in the summary.
 
       - name: Trivy scan before publish (CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.tag }}
           format: table
@@ -190,7 +190,7 @@ jobs:
 
       - name: Trivy scan (SARIF)
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.tag }}
           format: sarif

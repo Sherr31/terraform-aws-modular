@@ -218,7 +218,7 @@ jobs:
       # permanently and train people to ignore it. HIGH findings are still
       # reported via SARIF and the job summary.
       - name: Run Trivy (block on CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:ci-${{ github.sha }}
           format: table
@@ -228,7 +228,7 @@ jobs:
 
       - name: Run Trivy (SARIF output)
         if: always()
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:ci-${{ github.sha }}
           format: sarif
