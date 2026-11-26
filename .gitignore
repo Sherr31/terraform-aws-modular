@@ -25,6 +25,9 @@ modules/**/.terraform.lock.hcl
 *.tfstate.*
 *.tfstate.backup
 
+# Generated plan outputs (binary + human-readable)
+plans/
+
 # Variable files that may contain secrets
 *.tfvars
 *.tfvars.json

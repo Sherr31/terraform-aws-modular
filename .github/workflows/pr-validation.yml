@@ -17,6 +17,7 @@ on:
       - '*.tf'
       - '*.tfvars'
       - '.github/workflows/**'
+      - 'apps/infrastructure-lab/**'
       - 'modules/**'
       - 'examples/**'
       - 'bootstrap/**'

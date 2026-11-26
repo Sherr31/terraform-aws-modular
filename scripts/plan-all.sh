@@ -45,6 +45,11 @@ header() {
 
 mkdir -p "${PLAN_DIR}"
 
+if [ ! -d "${PLAN_DIR}" ]; then
+  echo "ERROR: ${PLAN_DIR} directory missing and could not be created." >&2
+  exit 1
+fi
+
 echo "Generating Terraform plans for all root configurations"
 echo "terraform: $(${TERRAFORM} version | head -1)"
 echo "Plans will be written to: ${PLAN_DIR}/"
@@ -82,21 +87,39 @@ for dir in "${CONFIGS[@]}"; do
     echo "  WARNING: plan failed for ${dir} (may need variables)"
     echo "  See: /tmp/tf-plan-${name}.log"
     echo "  Copied log to: ${PLAN_DIR}/${name}.txt (error output)"
-    cp /tmp/tf-plan-${name}.log "${PLAN_DIR}/${name}.txt"
+    mkdir -p "${PLAN_DIR}" 2>&1 || true
+    cp /tmp/tf-plan-${name}.log "${PLAN_DIR}/${name}.txt" 2>&1 || true
   fi
 
-  popd > /dev/null
+      popd > /dev/null
 done
+
+PLAN_DIR="plans"
 
 echo ""
 header "Plan summary"
+
+
+
+
 echo "Generated plans:"
-for plan in "${PLAN_DIR}"/*.plan; do
+  for plan in "${PLAN_DIR}"/*.plan; do
   if [ -f "${plan}" ]; then
     name="$(basename "${plan}" .plan)"
-    echo "  - ${name}.plan  ($(stat -c%s "${plan}" 2>/dev/null || echo '?') bytes)"
+    txt="${PLAN_DIR}/${name}.txt"
+    if [ -f "${txt}" ]; then
+      size_txt="$(stat -c%s "${txt}" 2>/dev/null || echo '?')"
+      echo "  - ${name}.plan  ($(stat -c%s "${plan}" 2>/dev/null || echo '?') bytes, ${size_txt} bytes text)"
+    else
+      echo "  - ${name}.plan  ($(stat -c%s "${plan}" 2>/dev/null || echo '?') bytes)"
+    fi
   fi
 done
+
+echo ""
+echo "DEBUG after summary loop — files in ${PLAN_DIR}:"
+ls -la "${PLAN_DIR}" 2>&1 || true
+
 echo ""
 echo "To inspect a plan:"
 echo "    terraform show plans/<name>.plan"

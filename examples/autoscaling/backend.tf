@@ -10,12 +10,12 @@
 # State file: examples/autoscaling/terraform.tfstate
 # Lock table:  from bootstrap output
 
-terraform {
-  backend "s3" {
-    bucket         = "BUCKET_NAME"
-    key            = "examples/autoscaling/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "LOCK_TABLE_NAME"
-  }
-}
+# terraform {
+#   backend "s3" {
+#     bucket         = "BUCKET_NAME"
+#     key            = "examples/autoscaling/terraform.tfstate"
+#     region         = "us-east-1"
+#     encrypt        = true
+#     dynamodb_table = "LOCK_TABLE_NAME"
+#   }
+# }

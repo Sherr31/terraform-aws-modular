@@ -1,26 +1,11 @@
-# .github/workflows/terraform-deploy.yml
-#
-# Terraform CD — deploy AWS infrastructure from approved configurations.
-#
-# Trigger: manual workflow_dispatch only.
-# Authentication: GitHub OIDC (no long-lived AWS keys).
-# Approval: required via GitHub Environment before apply.
-#
-# This workflow deploys one selected Terraform root configuration at a time.
-# It does NOT run on pull requests or pushes — those are handled by the CI
-# workflows (pr-validation.yml, push-validation.yml).
-
+# Terraform CD — manually deploy one selected AWS configuration.
 name: Terraform Deploy
 
 on:
   workflow_dispatch:
     inputs:
-      # -----------------------------------------------------------------------
-      # Configuration selection
-      # -----------------------------------------------------------------------
-
       configuration:
-        description: "Terraform root configuration to deploy."
+        description: Terraform root to deploy.
         required: true
         type: choice
         options:
@@ -34,178 +19,87 @@ on:
           - examples/ecr
           - apps/infrastructure-lab
           - bootstrap/terraform-state
-        default: "examples/vpc"
-
-      # -----------------------------------------------------------------------
-      # Terraform variables (optional)
-      # -----------------------------------------------------------------------
-
+        default: examples/vpc
       extra_vars:
-        description: "Extra Terraform variables as JSON object (e.g. {\"ami\": \"ami-12345678\"}). Leave empty for defaults."
+        description: Optional Terraform variables as a JSON object.
         required: false
         type: string
-        default: "{}"
-
-      # -----------------------------------------------------------------------
-      # Deployment behavior
-      # -----------------------------------------------------------------------
-
-      auto_apply:
-        description: "Skip the manual approval step and apply immediately. Use with caution — only for trusted environments."
-        required: false
-        type: boolean
-        default: false
-
-      environment_name:
-        description: "GitHub Environment to use for approval and protection rules. Leave empty to skip approval."
-        required: false
-        type: string
-        default: "terraform-deployment"
+        default: '{}'
 
 permissions:
   contents: read
   id-token: write
-  actions: write
+  actions: read
 
 concurrency:
   group: terraform-deploy-${{ inputs.configuration }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy ${{ inputs.configuration }}
+  plan:
+    name: Plan ${{ inputs.configuration }}
     runs-on: ubuntu-latest
-
-    environment:
-      name: ${{ inputs.environment_name }}
-      url: ${{ steps.show_outputs.outputs.alb_url || steps.show_outputs.outputs.app_url || '' }}
-
+    outputs:
+      plan_has_changes: ${{ steps.plan.outputs.plan_has_changes }}
     steps:
-      # -----------------------------------------------------------------------
-      # 1. Checkout the repository
-      # -----------------------------------------------------------------------
-
       - name: Checkout
         uses: actions/checkout@v4
-
-      # -----------------------------------------------------------------------
-      # 2. Set up Terraform
-      # -----------------------------------------------------------------------
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.17.1
 
-      # -----------------------------------------------------------------------
-      # 3. Authenticate to AWS via OIDC
-      # -----------------------------------------------------------------------
-      #
-      # This step requests temporary AWS credentials from the IAM role
-      # configured for OIDC trust. No long-lived access keys are used.
-      #
-      # The role must be configured with a trust policy that allows
-      # token.actions.githubusercontent.com to assume it, restricted to
-      # this repository and branch.
-      #
-      # Required IAM permissions for the role are documented in the workflow
-      # README. The role must have permission to manage all resources created
-      # by the selected Terraform configuration.
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          role-session-name: terraform-deploy-${{ inputs.configuration }}
+          role-session-name: terraform-plan-${{ inputs.configuration }}
           aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
-
-      # -----------------------------------------------------------------------
-      # 4. Initialize Terraform with the remote backend
-      # -----------------------------------------------------------------------
-      #
-      # The backend is configured in the root configuration's backend.tf.
-      # It points to the S3 bucket created by the bootstrap configuration.
-      #
-      # IMPORTANT: The bucket must exist before this workflow can run.
-      # The backend.tf files contain placeholder values (BUCKET_NAME,
-      # LOCK_TABLE_NAME) that must be replaced with actual values before
-      # the configuration can be deployed.
 
       - name: Terraform init
         working-directory: ${{ inputs.configuration }}
-        run: terraform init
-
-      # -----------------------------------------------------------------------
-      # 5. Validate the configuration
-      # -----------------------------------------------------------------------
-      #
-      # Re-run validation to confirm the configuration is correct after
-      # init. This catches issues that might not appear in CI if the
-      # backend configuration changes things.
+        run: terraform init -input=false
 
       - name: Terraform validate
         working-directory: ${{ inputs.configuration }}
         run: terraform validate
 
-      # -----------------------------------------------------------------------
-      # 6. Check formatting
-      # -----------------------------------------------------------------------
-
       - name: Terraform fmt check
         run: terraform fmt -check -recursive
-
-      # -----------------------------------------------------------------------
-      # 7. Generate Terraform plan
-      # -----------------------------------------------------------------------
-      #
-      # The plan is saved as a file and uploaded as an encrypted artifact.
-      # It is NOT printed to the workflow logs to avoid exposing sensitive
-      # resource details.
-      #
-      # Extra variables from the workflow input are passed to plan.
-      # The plan is generated with -detailed-exitcode so the workflow
-      # fails if there are errors (exit code 2) vs. no changes (exit code 1).
 
       - name: Terraform plan
         id: plan
         working-directory: ${{ inputs.configuration }}
+        env:
+          TF_EXTRA_VARS: ${{ inputs.extra_vars }}
         run: |
-          set -o pipefail
+          set -euo pipefail
+          extra_args=()
 
-          # Parse extra variables if provided
-          if [ -n "${{ inputs.extra_vars }}" ] && [ "${{ inputs.extra_vars }}" != "{}" ]; then
-            echo "Using extra variables: ${{ inputs.extra_vars }}"
-            EXTRA_ARGS=$(echo '${{ inputs.extra_vars }}' | jq -r 'to_entries | map("--var=\(.key)=\(.value)") | join(" ")')
-          else
-            EXTRA_ARGS=""
+          if [[ -n "$TF_EXTRA_VARS" && "$TF_EXTRA_VARS" != "{}" ]]; then
+            if ! jq -e 'type == "object"' >/dev/null <<< "$TF_EXTRA_VARS"; then
+              echo "extra_vars must be a JSON object." >&2
+              exit 1
+            fi
+            while IFS= read -r arg; do
+              extra_args+=("$arg")
+            done < <(jq -r 'to_entries[] | "--var=\(.key)=\(.value|tostring)"' <<< "$TF_EXTRA_VARS")
           fi
 
-          terraform plan \
-            -input=false \
-            -out=tfplan \
-            -detailed-exitcode \
-            $EXTRA_ARGS
-
-          PLAN_EXIT_CODE=${PIPESTATUS[0]}
-
-          if [ $PLAN_EXIT_CODE -eq 1 ]; then
-            echo "plan_has_changes=true" >> $GITHUB_OUTPUT
-            echo "Plan shows changes to be applied."
-          elif [ $PLAN_EXIT_CODE -eq 0 ]; then
-            echo "plan_has_changes=false" >> $GITHUB_OUTPUT
-            echo "Plan shows no changes. Nothing to deploy."
+          if terraform plan -input=false -out=tfplan -detailed-exitcode "${extra_args[@]}"; then
+            echo "plan_has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "No changes to apply."
           else
-            echo "Plan failed with exit code $PLAN_EXIT_CODE"
-            exit 1
+            plan_exit_code=$?
+            if [ "$plan_exit_code" -eq 2 ]; then
+              echo "plan_has_changes=true" >> "$GITHUB_OUTPUT"
+              echo "Plan artifact will be available for review before approval."
+            else
+              echo "Terraform plan failed with exit code $plan_exit_code." >&2
+              exit "$plan_exit_code"
+            fi
           fi
-
-      # -----------------------------------------------------------------------
-      # 8. Upload plan as artifact
-      # -----------------------------------------------------------------------
-      #
-      # The plan file is uploaded as a GitHub Actions artifact. This allows
-      # reviewers to download and inspect the plan before approving the apply.
-      # Artifacts are encrypted at rest by GitHub.
 
       - name: Upload plan artifact
         if: steps.plan.outputs.plan_has_changes == 'true'
@@ -213,102 +107,58 @@ jobs:
         with:
           name: tfplan-${{ inputs.configuration }}-${{ github.run_id }}
           path: ${{ inputs.configuration }}/tfplan
+          if-no-files-found: error
           retention-days: 7
-          encryption: aes256
 
-      # -----------------------------------------------------------------------
-      # 9. Skip apply if no changes
-      # -----------------------------------------------------------------------
-
-      - name: No changes to apply
+      - name: No changes summary
         if: steps.plan.outputs.plan_has_changes == 'false'
-        run: |
-          echo "No infrastructure changes detected. Skipping apply."
-          echo "plan_result=no_changes" >> $GITHUB_ENV
+        run: echo "No infrastructure changes detected; apply was skipped." >> "$GITHUB_STEP_SUMMARY"
 
-      # -----------------------------------------------------------------------
-      # 10. Require manual approval before apply
-      # -----------------------------------------------------------------------
-      #
-      # If auto_apply is false and a GitHub Environment is configured, this
-      # step pauses for manual approval. The environment's required reviewers
-      # must approve the deployment before this step completes.
-      #
-      # If auto_apply is true, this step is skipped and apply proceeds
-      # immediately after the plan.
-      #
-      # If no environment is configured (empty environment_name), this step
-      # is skipped and apply proceeds immediately. Use with caution.
+  apply:
+    name: Apply ${{ inputs.configuration }}
+    needs: plan
+    if: needs.plan.outputs.plan_has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: terraform-deployment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Wait for deployment approval
-        if: ${{ inputs.auto_apply != 'true' && inputs.environment_name != '' }}
-        run: |
-          echo "Deployment requires manual approval via GitHub Environment '${{ inputs.environment_name }}'."
-          echo "Go to the Actions tab and approve the deployment when ready."
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
 
-      # -----------------------------------------------------------------------
-      # 11. Apply the plan
-      # -----------------------------------------------------------------------
-      #
-      # The apply uses the exact plan file generated earlier. This guarantees
-      # that what was planned is what gets applied — no drift between plan
-      # and apply.
-      #
-      # If no changes were detected, this step is skipped.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: terraform-apply-${{ inputs.configuration }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Terraform init
+        working-directory: ${{ inputs.configuration }}
+        run: terraform init -input=false
+
+      - name: Download reviewed plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.configuration }}-${{ github.run_id }}
+          path: ${{ inputs.configuration }}
 
       - name: Terraform apply
-        if: steps.plan.outputs.plan_has_changes == 'true' && (inputs.auto_apply == 'true' || inputs.environment_name == '')
         working-directory: ${{ inputs.configuration }}
-        run: terraform apply -auto-approve tfplan
-
-      - name: Terraform apply (after approval)
-        if: steps.plan.outputs.plan_has_changes == 'true' && inputs.auto_apply != 'true' && inputs.environment_name != ''
-        working-directory: ${{ inputs.configuration }}
-        run: terraform apply -auto-approve tfplan
-
-      # -----------------------------------------------------------------------
-      # 12. Show deployment outputs
-      # -----------------------------------------------------------------------
-      #
-      # After apply, show key outputs from the deployment. These are safe
-      # to print — they are resource identifiers and URLs, not secrets.
+        run: terraform apply -input=false -auto-approve tfplan
 
       - name: Show outputs
-        id: show_outputs
-        if: steps.plan.outputs.plan_has_changes == 'true'
         working-directory: ${{ inputs.configuration }}
-        run: |
-          echo "=== Deployment Outputs ==="
-          terraform output -json | jq -r 'to_entries | .[] | "  \(.key): \(.value.value)"'
-          echo ""
-
-          # Set deployment URL for GitHub Environment if applicable
-          if [ -f terraform.tfstate ]; then
-            ALB_DNS=$(terraform output -raw alb_dns_name 2>/dev/null || echo "")
-            if [ -n "$ALB_DNS" ]; then
-              echo "deployment_url=https://$ALB_DNS" >> $GITHUB_OUTPUT
-            fi
-          fi
-
-      # -----------------------------------------------------------------------
-      # 13. Final status
-      # -----------------------------------------------------------------------
+        run: terraform output
 
       - name: Deployment summary
         run: |
-          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Configuration | \`${{ inputs.configuration }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Run ID | \`${{ github.run_id }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Triggered by | \`${{ github.actor }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Plan has changes | \`${{ steps.plan.outputs.plan_has_changes }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Auto apply | \`${{ inputs.auto_apply }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environment | \`${{ inputs.environment_name }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.plan.outputs.plan_has_changes }}" = "true" ]; then
-            echo "✅ Deployment completed. Check the outputs above for resource details." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "ℹ️ No changes detected. Infrastructure is already up to date." >> $GITHUB_STEP_SUMMARY
-          fi
+          {
+            echo "## Terraform deployment completed"
+            echo "- Configuration: ${{ inputs.configuration }}"
+            echo "- Plan artifact: tfplan-${{ inputs.configuration }}-${{ github.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"

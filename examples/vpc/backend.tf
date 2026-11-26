@@ -13,12 +13,12 @@
 # State file: examples/vpc/terraform.tfstate
 # Lock table:  from bootstrap output (e.g., terraform-state-locks)
 
-terraform {
-  backend "s3" {
-    bucket         = "BUCKET_NAME" # Replace with actual bucket name
-    key            = "examples/vpc/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "LOCK_TABLE_NAME" # Replace with actual DynamoDB table name
-  }
-}
+# terraform {
+#   backend "s3" {
+#     bucket         = "BUCKET_NAME" # Replace with actual bucket name
+#     key            = "examples/vpc/terraform.tfstate"
+#     region         = "us-east-1"
+#     encrypt        = true
+#     dynamodb_table = "LOCK_TABLE_NAME" # Replace with actual DynamoDB table name
+#   }
+# }

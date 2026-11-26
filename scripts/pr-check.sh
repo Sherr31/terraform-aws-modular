@@ -45,7 +45,11 @@ fi
 echo ""
 
 echo "3/4  Secret scan"
-if python3 -m gitleaks detect --source . --no-banner --verbose > /tmp/pr-secrets.log 2>&1; then
+if ! command -v gitleaks > /dev/null 2>&1; then
+  echo "Error: Gitleaks CLI is not installed." > /tmp/pr-secrets.log
+  echo "Install it with: go install github.com/zricethezav/gitleaks/v8@latest"
+  fail "gitleaks (CLI not installed)"
+elif gitleaks detect --source . --no-banner --verbose > /tmp/pr-secrets.log 2>&1; then
   pass "gitleaks"
 else
   # gitleaks returns non-zero when findings exist; treat that as a failure
