@@ -1,0 +1,245 @@
+# .github/workflows/docker-publish.yml
+#
+# Docker image publishing — push tested images to Amazon ECR.
+#
+# Trigger:
+#   - workflow_run: runs only when Docker CI (docker-ci.yml) finished
+#     successfully on main. This guarantees only images that already passed
+#     build + unit tests + Compose test + Trivy make it to the registry.
+#   - workflow_dispatch: manual trigger for retry/republish of a known-good
+#     image when needed.
+#
+# Images are never rebuilt here. Docker CI builds the image once, runs all
+# verification, and exports it as an artifact. This workflow loads that exact
+# artifact and pushes it, so the published bytes are identical to what was
+# tested.
+#
+# Tags:
+#   - sha-<commit>  : immutable, canonical, used by app-deploy.yml
+#   - latest        : convenience tag, updated on every publish
+#
+# Secrets required:
+#   AWS_ROLE_ARN   - OIDC role ARN with ECR push permissions
+#   ECR_REPO_URI   - e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api
+#   AWS_REGION     - (optional) region, default us-east-1
+#
+# Permissions:
+#   id-token: write  -> request OIDC token for AWS
+#   actions: read    -> download the Docker CI artifact
+#   contents: read   -> (not strictly needed, kept small)
+
+name: Docker Publish
+
+on:
+  workflow_run:
+    workflows:
+      - "Docker CI"
+    branches:
+      - main
+    types:
+      - completed
+
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Commit SHA to publish (must match a Docker CI run on main). Leave empty to use the latest successful Docker CI run on main."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
+env:
+  APP_DIR: apps/containerized-api
+  IMAGE_NAME: containerized-api
+
+jobs:
+  publish:
+    name: Publish to ECR
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    steps:
+      # -------------------------------------------------------------------
+      # Resolve which commit to publish
+      # -------------------------------------------------------------------
+      # workflow_run: use the triggering Docker CI run's commit.
+      # workflow_dispatch: use the provided SHA, or fall back to the most
+      # recent successful Docker CI run on main.
+
+      - name: Resolve commit SHA
+        id: sha
+        run: |
+          # workflow_run: the triggering Docker CI run's commit SHA is directly
+          # available; the tested image artifact uses that SHA as its name.
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+            echo "Resolved commit SHA from workflow_run: $SHA"
+            exit 0
+          fi
+
+          # workflow_dispatch with an explicit SHA: use it directly.
+          if [ -n "${{ github.event.inputs.image_sha }}" ]; then
+            SHA="${{ github.event.inputs.image_sha }}"
+            echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+            echo "Using provided SHA: $SHA"
+            exit 0
+          fi
+
+          # workflow_dispatch without an SHA: find the latest successful
+          # Docker CI run on main via the API.
+          RUN_ID=""
+          PAGE=1
+          while [ -z "$RUN_ID" ] && [ "$PAGE" -le 5 ]; do
+            RESPONSE=$(curl -fsS \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?workflow_name=Docker%20CI&status=success&branch=main&per_page=5&page=$PAGE" \
+              || true)
+            RUN_ID=$(echo "$RESPONSE" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['workflow_runs'][0]['id'] if d.get('workflow_runs') else '')" \
+              2>/dev/null || true)
+            PAGE=$((PAGE + 1))
+          done
+
+          if [ -z "$RUN_ID" ]; then
+            echo "No successful Docker CI run found on main." >&2
+            exit 1
+          fi
+
+          SHA=$(curl -fsS \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['head_sha'])")
+          echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Resolved commit SHA: $SHA (run $RUN_ID)"
+
+      # -------------------------------------------------------------------
+      # Checkout (needed only to locate the artifact name convention)
+      # -------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------
+      # Authenticate to AWS via OIDC
+      # -------------------------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: docker-publish
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      # -------------------------------------------------------------------
+      # Authenticate Docker to ECR via OIDC -> GetAuthorizationToken
+      # -------------------------------------------------------------------
+      - name: Login to Amazon ECR
+        run: |
+          REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          # Derive the registry host from the repo URI (strip the image path).
+          REG_URI="${{ secrets.ECR_REPO_URI || '123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api' }}"
+          REG_HOST="${REG_URI%%/*}"
+          aws ecr get-login-password --region "$REGION" \
+            | docker login --username AWS --password-stdin "$REG_HOST"
+
+      # -------------------------------------------------------------------
+      # Download the tested image artifact from Docker CI
+      # -------------------------------------------------------------------
+      - name: Download tested image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image-${{ steps.sha.outputs.tag }}
+          path: /tmp/image
+        # If workflow_run triggered with the resolved SHA, the artifact
+        # name matches docker-ci's build artifact. For manual dispatch with
+        # a matching SHA, the same applies.
+
+      - name: Load image
+        run: |
+          set -euo pipefail
+          IMG="${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.tag }}"
+          docker load -i /tmp/image/image.tar
+          echo "Loaded $IMG"
+          docker images "$IMG" --format "Loaded: {{.Repository}}:{{.Tag}} ({{.ID}})"
+
+      # -------------------------------------------------------------------
+      # Re-scan before publishing (CRITICAL only, block on fixable)
+      # -------------------------------------------------------------------
+      # The image already passed a full Trivy scan in Docker CI, but this is
+      # a final gate at publish time. Only CRITICAL fixable findings block the
+      # push; HIGH findings are recorded in the summary.
+
+      - name: Trivy scan before publish (CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.tag }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - name: Trivy scan (SARIF)
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.tag }}
+          format: sarif
+          output: trivy-publish.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-publish.sarif
+
+      # -------------------------------------------------------------------
+      # Tag and push
+      # -------------------------------------------------------------------
+      - name: Tag image
+        run: |
+          SHA="${{ steps.sha.outputs.tag }}"
+          BASE="${{ env.IMAGE_NAME }}"
+          REG="${{ secrets.ECR_REPO_URI || '123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api' }}"
+          docker tag "$BASE:sha-$SHA" "$REG:sha-$SHA"
+          docker tag "$BASE:sha-$SHA" "$REG:latest"
+          echo "Tagged sha-$SHA and latest"
+
+      - name: Push to ECR
+        run: |
+          REG="${{ secrets.ECR_REPO_URI || '123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api' }}"
+          SHA="${{ steps.sha.outputs.tag }}"
+          docker push "$REG:sha-$SHA"
+          docker push "$REG:latest"
+          echo "Pushed $REG:sha-$SHA"
+          echo "Pushed $REG:latest"
+
+      - name: Publish summary
+        run: |
+          REG="${{ secrets.ECR_REPO_URI || '123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api' }}"
+          SHA="${{ steps.sha.outputs.tag }}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Published to ECR
+
+          | Image | Tag |
+          |-------|-----|
+          | \`$REG\` | \`sha-$SHA\` (immutable) |
+          | \`$REG\` | \`latest\` (convenience) |
+
+          **Commit:** \`$SHA\`
+
+          The immutable \`sha-$SHA\` tag is the deployment source of truth.
+          Use \`latest\` only for convenience and pin deployments to the SHA tag.
+          EOF

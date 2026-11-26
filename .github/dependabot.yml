@@ -1,0 +1,88 @@
+# .github/dependabot.yml
+#
+# Automates dependency updates for:
+#   - GitHub Actions (workflow dependencies)
+#   - Terraform providers (aws provider)
+#
+# Dependabot creates pull requests when new versions are available.
+# PRs are NOT automatically merged — they go through the normal PR review
+# process, including the terraform validation CI workflows.
+
+version: 2
+updates:
+  # ---------------------------------------------------------------------------
+  # GitHub Actions — updated weekly
+  # ---------------------------------------------------------------------------
+  # GitHub Actions dependencies are referenced as reusable workflows or actions
+  # in .github/workflows/*.yml. Dependabot scans these files and opens PRs when
+  # newer versions of the referenced actions are available.
+  #
+  # Grouped by ecosystem to keep PRs focused:
+  #   - "github-actions" group: all action updates in one PR
+  #
+  # Interval: weekly on Monday. Daily would create too many PRs for a project
+  # this size. Monthly would be too slow for security updates.
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "ci-cd"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    open-pull-requests-limit: 5
+
+  # ---------------------------------------------------------------------------
+  # Terraform AWS Provider — updated weekly
+  # ---------------------------------------------------------------------------
+  # The AWS provider is pinned in every modules/*/versions.tf and
+  # examples/*/versions.tf as:
+  #
+  #   required_providers {
+  #     aws = {
+  #       source  = "hashicorp/aws"
+  #       version = ">= 5.0, < 6.0"
+  #     }
+  #   }
+  #
+  # Dependabot scans these constraints and opens PRs when a new 5.x version
+  # is released. It does NOT upgrade across major versions (e.g., 5.x to 6.x)
+  # because that would break the version constraint.
+  #
+  # Grouped into a single "terraform-providers" group so all provider updates
+  # arrive in one PR instead of one PR per file.
+
+  - package-ecosystem: "terraform"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      terraform-providers:
+        patterns:
+          - "hashicorp/aws"
+        update-types:
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "terraform"
+    commit-message:
+      prefix: "terraform"
+      include: "scope"
+    open-pull-requests-limit: 5

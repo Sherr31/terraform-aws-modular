@@ -1,0 +1,361 @@
+# .github/workflows/app-deploy.yml
+#
+# Application CD — deploy the containerized API to an EC2 host via SSH.
+#
+# Trigger:
+#   - workflow_dispatch (manual): select the image tag and target host.
+#   - workflow_run on successful docker-publish.yml on main: queues an
+#     automatic deployment of the just-published sha-<commit> image.
+#
+# Both triggers require approval through the GitHub Environment "production"
+# (configure required reviewers in Settings -> Environments). If the
+# environment is not configured, the deployment proceeds without approval —
+# document this tradeoff and configure the environment for production use.
+#
+# Deployment model:
+#   1. Transfer compose.prod.yaml and the image tarball to
+#      /opt/containerized-api/ on the host.
+#   2. Write a .env file with ECR_REPO_URI, IMAGE_TAG, HOST_PORT.
+#   3. Save the previous image tag (for rollback).
+#   4. docker load the transferred image.
+#   5. docker compose -f compose.prod.yaml up -d
+#   6. Poll container health, then verify /health, /info, and 404 handling.
+#   7. On any failure: revert .env to the previous tag, load the backed-up
+#      image, re-verify, and exit 1.
+#
+# Prerequisites (configure as GitHub Secrets):
+#   EC2_HOST            - hostname or IP of the deploy target
+#   EC2_USER            - SSH user (default ec2-user)
+#   EC2_SSH_PRIVATE_KEY - SSH private key with access to the host
+#   ECR_REPO_URI        - e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api
+#   AWS_ROLE_ARN       - OIDC role with ECR read permission (GetAuthorizationToken)
+#   AWS_REGION          - (optional) default us-east-1
+#
+# The deploy target must have:
+#   - Docker Engine installed
+#   - Docker Compose v2 plugin (docker compose)
+#   - Network access from GitHub Actions runners (or a reachable bastion)
+#
+# Security notes:
+#   - SSH host key is scanned at deploy time via ssh-keyscan. For production,
+#     pin the host key and verify it instead of scanning.
+#   - The SSH private key is written to a 600 file and never printed to logs.
+#   - ECR credentials are short-lived (OIDC) and scoped to GetAuthorizationToken.
+
+name: Application Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy. Use the immutable sha-<commit> tag for production. Defaults to 'latest'."
+        required: false
+        type: string
+        default: "latest"
+      ec2_host:
+        description: "EC2 host to deploy to (overrides EC2_HOST secret)."
+        required: false
+        type: string
+        default: ""
+      ec2_user:
+        description: "SSH user (overrides EC2_USER secret)."
+        required: false
+        type: string
+        default: ""
+      host_port:
+        description: "Host port to expose (overrides HOST_PORT)."
+        required: false
+        type: string
+        default: "8080"
+
+  workflow_run:
+    workflows:
+      - "Docker Publish"
+    branches:
+      - main
+    types:
+      - completed
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: app-deploy-${{ inputs.ec2_host || secrets.EC2_HOST || 'default' }}
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /opt/containerized-api
+  ECR_REPO_URI: ${{ secrets.ECR_REPO_URI || '123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api' }}
+  EC2_HOST: ${{ inputs.ec2_host || secrets.EC2_HOST }}
+  EC2_USER: ${{ inputs.ec2_user || secrets.EC2_USER || 'ec2-user' }}
+  HOST_PORT: ${{ inputs.host_port || '8080' }}
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: http://${{ env.EC2_HOST }}:${{ env.HOST_PORT }}
+    steps:
+      # -------------------------------------------------------------------
+      # Resolve the image tag to deploy
+      # -------------------------------------------------------------------
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+            [ -z "$TAG" ] && TAG="latest"
+          else
+            # workflow_run from docker-publish: use the commit SHA
+            TAG="sha-${{ github.event.workflow_run.head_sha }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying tag: $TAG"
+
+      # -------------------------------------------------------------------
+      # Authenticate to AWS via OIDC (read-only: GetAuthorizationToken)
+      # -------------------------------------------------------------------
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: app-deploy
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      # -------------------------------------------------------------------
+      # Authenticate Docker to ECR.
+      # The GitHub runner uses these credentials to pull the image, save it
+      # as a tarball, and transfer it to the deploy host. The deploy host
+      # itself has no AWS credentials and no ECR access.
+      # -------------------------------------------------------------------
+      - name: Login to Amazon ECR
+        run: |
+          REGION="${{ secrets.AWS_REGION || 'us-east-1' }}"
+          REG_URI="${{ env.ECR_REPO_URI }}"
+          REG_HOST="${REG_URI%%/*}"
+          aws ecr get-login-password --region "$REGION" \
+            | docker login --username AWS --password-stdin "$REG_HOST"
+
+      # -------------------------------------------------------------------
+      # Validate required configuration
+      # -------------------------------------------------------------------
+      - name: Validate configuration
+        run: |
+          echo "EC2_HOST=${{ env.EC2_HOST }}"
+          echo "EC2_USER=${{ env.EC2_USER }}"
+          echo "ECR_REPO_URI=${{ env.ECR_REPO_URI }}"
+          echo "HOST_PORT=${{ env.HOST_PORT }}"
+          echo "IMAGE_TAG=${{ steps.tag.outputs.tag }}"
+          [ -n "${{ env.EC2_HOST }}" ] || { echo "EC2_HOST is not set. Configure the EC2_HOST secret or pass it as an input."; exit 1; }
+          [ -n "${{ env.ECR_REPO_URI }}" ] || { echo "ECR_REPO_URI is not set. Configure the ECR_REPO_URI secret."; exit 1; }
+
+      # -------------------------------------------------------------------
+      # Prepare SSH
+      # -------------------------------------------------------------------
+      - name: Prepare SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Remove the key material from the environment so it is never
+          # accidentally leaked in later steps.
+          unset EC2_SSH_PRIVATE_KEY
+
+      - name: Scan host key
+        run: |
+          # Accept the host key at deploy time. For production, replace this
+          # with a pinned known_hosts entry and StrictHostKeyChecking=yes.
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ env.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          chmod 644 ~/.ssh/known_hosts
+
+      # -------------------------------------------------------------------
+      # Checkout (needed for compose.prod.yaml)
+      # -------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # -------------------------------------------------------------------
+      # Copy compose.prod.yaml to the deploy host.
+      # compose.prod.yaml references the image via environment variables
+      # (ECR_REPO_URI and IMAGE_TAG), so it is the same file for every
+      # deployment — only the .env changes.
+      # -------------------------------------------------------------------
+      - name: Copy compose file to host
+        run: |
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            apps/containerized-api/compose.prod.yaml \
+            "${{ env.EC2_USER }}@${{ env.EC2_HOST }}:${{ env.APP_DIR }}/compose.prod.yaml"
+
+      # -------------------------------------------------------------------
+      # Pull the image from ECR, save it as a tarball, and transfer it to
+      # the deploy host. The deploy host loads the tarball directly, so it
+      # needs no ECR credentials and no AWS access.
+      # -------------------------------------------------------------------
+      - name: Transfer image to host
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          REPO="${{ env.ECR_REPO_URI }}"
+          HOST="${{ env.EC2_HOST }}"
+          USER="${{ env.EC2_USER }}"
+          DIR="${{ env.APP_DIR }}"
+
+          echo "Pulling $REPO:$TAG ..."
+          docker pull "$REPO:$TAG"
+
+          echo "Saving image to tarball..."
+          docker save "$REPO:$TAG" -o /tmp/api.tar
+
+          echo "Transferring tarball to $USER@$HOST:$DIR/api.tar ..."
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            /tmp/api.tar \
+            "$USER@$HOST:$DIR/api.tar"
+
+      # -------------------------------------------------------------------
+      # Deploy
+      # -------------------------------------------------------------------
+      - name: Deploy
+        id: deploy
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          HOST="${{ env.EC2_HOST }}"
+          USER="${{ env.EC2_USER }}"
+          PORT="${{ env.HOST_PORT }}"
+          REPO="${{ env.ECR_REPO_URI }}"
+
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
+            "$USER@$HOST" \
+            TAG="$TAG" PORT="$PORT" REPO="$REPO" \
+            bash <<'DEPLOY'
+            set -uo pipefail
+
+            DIR="/opt/containerized-api"
+            mkdir -p "$DIR"
+            cd "$DIR"
+
+            # Previous working image tag (for rollback)
+            PREV="$(cat .current_image 2>/dev/null || true)"
+
+            # If a previous image is cached locally, back it up so rollback
+            # does not depend on ECR access from the host.
+            if [ -n "$PREV" ] && docker image inspect "$REPO:$PREV" >/dev/null 2>&1; then
+              echo "Backing up previous image $REPO:$PREV ..."
+              docker save "$REPO:$PREV" -o .prev_image.tar || true
+            fi
+
+            # Write environment for this deployment
+          cat > .env <<ENV
+          ECR_REPO_URI=${REPO}
+          IMAGE_TAG=${TAG}
+          HOST_PORT=${PORT}
+          ENV
+
+            # Load the transferred image
+            echo "[$TAG] Loading image from api.tar ..."
+            if ! docker load -i api.tar; then
+              echo "[$TAG] Image load failed."
+              exit 1
+            fi
+            rm -f api.tar
+
+            # Start the service
+            echo "[$TAG] Starting services..."
+            if ! docker compose -f compose.prod.yaml up -d; then
+              echo "[$TAG] Up failed."
+              exit 1
+            fi
+
+            # Record current image
+            echo -n "$TAG" > .current_image
+
+            # Wait for healthy
+            echo "[$TAG] Waiting for healthy..."
+            HEALTHY=0
+            for i in $(seq 1 30); do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' containerized-api 2>/dev/null || echo missing)
+              echo "[$TAG] health attempt $i: $STATUS"
+              [ "$STATUS" = "healthy" ] && { HEALTHY=1; break; }
+              sleep 2
+            done
+
+            if [ "$HEALTHY" != "1" ]; then
+              echo "[$TAG] Container did not become healthy."
+            fi
+
+            # Verify endpoints
+            echo "[$TAG] Verifying endpoints..."
+            HEALTH_OK=0
+            curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1 && HEALTH_OK=1 || echo "[$TAG] /health failed"
+            INFO_OK=0
+            curl -fsS "http://localhost:${PORT}/info" >/dev/null 2>&1 && INFO_OK=1 || echo "[$TAG] /info failed"
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${PORT}/nonexistent" 2>/dev/null || echo 000)
+            NOT_FOUND_OK=0
+            [ "$CODE" = "404" ] && NOT_FOUND_OK=1 || echo "[$TAG] 404 check failed (code=$CODE)"
+
+            VERIFY_OK=1
+            [ "$HEALTHY" = "1" ] || VERIFY_OK=0
+            [ "$HEALTH_OK" = "1" ] || VERIFY_OK=0
+            [ "$INFO_OK" = "1" ] || VERIFY_OK=0
+            [ "$NOT_FOUND_OK" = "1" ] || VERIFY_OK=0
+
+            if [ "$VERIFY_OK" != "1" ]; then
+              echo "[$TAG] Verification failed. Rolling back to $PREV."
+              if [ -n "$PREV" ]; then
+          cat > .env <<ENV
+          ECR_REPO_URI=${REPO}
+          IMAGE_TAG=${PREV}
+          HOST_PORT=${PORT}
+          ENV
+                if [ -f .prev_image.tar ]; then
+                  docker load -i .prev_image.tar || true
+                  rm -f .prev_image.tar
+                fi
+                docker compose -f compose.prod.yaml up -d || true
+                RB_OK=0
+                for i in $(seq 1 15); do
+                  STATUS=$(docker inspect --format='{{.State.Health.Status}}' containerized-api 2>/dev/null || echo missing)
+                  [ "$STATUS" = "healthy" ] && { RB_OK=1; break; }
+                  sleep 2
+                done
+                if [ "$RB_OK" = "1" ]; then
+                  curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1 && echo "Rollback healthy." || echo "Rollback health check failed."
+                else
+                  echo "Rollback did not reach healthy state."
+                fi
+              else
+                echo "[$TAG] No previous image to roll back to."
+              fi
+              exit 1
+            fi
+
+            echo "[$TAG] Deployment verified. Previous: ${PREV:-none}"
+          DEPLOY
+
+      # -------------------------------------------------------------------
+      # Summary
+      # -------------------------------------------------------------------
+      - name: Deployment summary
+        if: always()
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          HOST="${{ env.EC2_HOST }}"
+          PORT="${{ env.HOST_PORT }}"
+          REPO="${{ env.ECR_REPO_URI }}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Deployed
+
+          | Item | Value |
+          |------|-------|
+          | Image | \`$REPO:$TAG\` |
+          | Host | \`$HOST\` |
+          | Port | \`$PORT\` |
+          | Method | \`${{ github.event_name }}\` |
+
+          - Immutable tag \`sha-$TAG\` is the deployment source of truth.
+          - The \`latest\` tag is updated by docker-publish.yml on every publish.
+          - Rollback target is recorded in \`.current_image\` on the host.
+          EOF

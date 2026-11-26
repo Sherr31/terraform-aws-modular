@@ -1,0 +1,25 @@
+# apps/containerized-api/pyproject.toml
+#
+# Optional project configuration for the containerized API.
+#
+# This file is used by:
+#   - pytest (if used instead of unittest)
+#   - Python tooling (black, isort, mypy, etc.)
+#   - Package managers
+#
+# The application itself does not require this file to run.
+# It is included for development tooling compatibility.
+
+[project]
+name = "containerized-api"
+version = "1.0.0"
+description = "Minimal Python HTTP API with health endpoint"
+requires-python = ">=3.11"
+dependencies = []
+readme = "README.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

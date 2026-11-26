@@ -1,0 +1,70 @@
+# Terraform local artifacts
+
+# Terraform working directories
+.terraform/
+
+# Provider dependency lock files
+# -----------------------------------------------------------------------------
+# Lock files pin the exact provider versions Terraform resolves. Every
+# engineer and CI run should use the same provider behavior.
+#
+# Commit lock files from root configurations (examples/, bootstrap/, apps/).
+# Do NOT commit lock files from reusable modules (modules/).
+# -----------------------------------------------------------------------------
+
+# Commit these — root configurations that own their own state:
+# !examples/**/.terraform.lock.hcl
+# !bootstrap/**/.terraform.lock.hcl
+# !apps/**/.terraform.lock.hcl
+
+# Ignore these — reusable modules should not have their own lock files:
+modules/**/.terraform.lock.hcl
+
+# State files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Variable files that may contain secrets
+*.tfvars
+*.tfvars.json
+
+# Overrides
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Sensitive local files
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.secret
+terraform.tfvars.local
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Docker
+.docker/
+
+# Keep reusable modules free of state and provider artifacts.
+# -----------------------------------------------------------------------------
+# modules/ is a reusable library, not a root configuration. Do not commit
+# state files or .terraform/ directories that happen to live under modules/.
+# A real child module should not be applied on its own, so it should not own
+# state.
+# -----------------------------------------------------------------------------

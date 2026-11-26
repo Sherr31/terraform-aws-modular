@@ -1,0 +1,58 @@
+# .dockerignore for containerized-api
+#
+# Excludes files that should not be in the Docker build context.
+# A smaller build context means faster builds and smaller images.
+
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.pip/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+Dockerfile.*
+docker-compose*.yml
+compose.yaml
+.docker/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed in image)
+*.md
+!README.md
+
+# Tests (not needed in production image, but available for build-stage testing)
+tests/

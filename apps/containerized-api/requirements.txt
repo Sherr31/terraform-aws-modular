@@ -1,0 +1,11 @@
+# apps/containerized-api/requirements.txt
+#
+# Python dependencies for the containerized API.
+#
+# This application uses only Python's standard library, so there are
+# no external dependencies to install. This file is kept for compatibility
+# with tooling that expects a requirements.txt file.
+#
+# If dependencies are added in the future, list them here:
+#   flask==2.3.0
+#   requests==2.31.0

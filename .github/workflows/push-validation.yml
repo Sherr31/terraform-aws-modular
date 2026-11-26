@@ -1,0 +1,76 @@
+# .github/workflows/push-validation.yml
+#
+# Validates all Terraform configurations on every push to main.
+#
+# This is a lighter check than the PR workflow — it confirms main
+# stays valid after merges.
+
+name: Terraform Push Validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '*.tf'
+      - '*.tfvars'
+      - '.github/workflows/**'
+      - 'modules/**'
+      - 'examples/**'
+      - 'bootstrap/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: push-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  terraform-fmt:
+    name: Terraform Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive -diff
+
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        directory:
+          - examples/vpc
+          - examples/ec2
+          - examples/s3
+          - examples/iam
+          - examples/security-group
+          - examples/alb
+          - examples/autoscaling
+          - examples/ecr
+          - bootstrap/terraform-state
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+
+      - name: Init
+        working-directory: ${{ matrix.directory }}
+        run: terraform init -backend=false
+
+      - name: Validate
+        working-directory: ${{ matrix.directory }}
+        run: terraform validate

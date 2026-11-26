@@ -1,0 +1,37 @@
+# apps/containerized-api/compose.prod.yaml
+#
+# Deployment Compose file for the containerized API.
+#
+# Used by app-deploy.yml to roll out a pre-built image from Amazon ECR.
+# Does NOT build locally — it pulls the published image.
+#
+# Configuration is supplied through a .env file in the same directory
+# (written by the deploy workflow), using Compose variable substitution:
+#
+#   image: ${ECR_REPO_URI}:${IMAGE_TAG}
+#
+# Required environment variables (written by the deploy workflow):
+#   ECR_REPO_URI  - e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/containerized-api
+#   IMAGE_TAG     - immutable tag, e.g. sha-<commit>
+#   HOST_PORT     - optional host port (default 8080)
+#
+# Do not use this file for local development. Use compose.yaml instead.
+
+services:
+  api:
+    image: ${ECR_REPO_URI}:${IMAGE_TAG}
+    container_name: containerized-api
+    ports:
+      - ${HOST_PORT:-8080}:8080
+    environment:
+      - APP_PORT=8080
+      - APP_HOST=0.0.0.0
+      - APP_ENV=production
+      - APP_VERSION=${IMAGE_TAG}
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
