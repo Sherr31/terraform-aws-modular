@@ -24,9 +24,9 @@ variable "ecr_repository_name" {
 }
 
 variable "ecr_image_tag" {
-  description = "ECR image tag (commit SHA) to deploy"
+  description = "Immutable ECR image tag (commit SHA)"
   type        = string
-  default     = "latest"
+  default     = "a33d7e9e6479cea857f09d9ebcc149a49051c5e3"
 }
 
 variable "db_identifier" {

@@ -22,25 +22,31 @@ variable "vpc_id" {
 
 variable "ingress_rules" {
   description = "Inbound security group rules"
+
   type = list(object({
-    description = optional(string)
-    from_port   = number
-    to_port     = number
-    protocol    = string
-    cidr_blocks = optional(list(string), [])
+    description  = optional(string)
+    from_port    = number
+    to_port      = number
+    protocol     = string
+    cidr_blocks  = optional(list(string), [])
+    source_sg_id = optional(string)
   }))
+
   default = []
 }
 
 variable "egress_rules" {
   description = "Outbound security group rules"
+
   type = list(object({
-    description = optional(string)
-    from_port   = number
-    to_port     = number
-    protocol    = string
-    cidr_blocks = optional(list(string), ["0.0.0.0/0"])
+    description  = optional(string)
+    from_port    = number
+    to_port      = number
+    protocol     = string
+    cidr_blocks  = optional(list(string), ["0.0.0.0/0"])
+    source_sg_id = optional(string)
   }))
+
   default = []
 }
 
