@@ -52,3 +52,25 @@ variable "vpc_id" {
   description = "VPC ID where the target group will be created"
   type        = string
 }
+
+variable "path_rules" {
+  description = "Path-based routing rules for listener"
+  type = list(object({
+    priority          = number
+    paths             = list(string)
+    target_group_arn  = string
+  }))
+  default = []
+}
+
+variable "default_target_id" {
+  description = "Optional target ID for default target group attachment"
+  type        = string
+  default     = null
+}
+
+variable "target_group_arns" {
+  description = "Additional target group ARNs for attachment"
+  type        = list(string)
+  default     = []
+}

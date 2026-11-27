@@ -55,3 +55,33 @@ variable "tags" {
     Project     = "terraform-aws-modular"
   }
 }
+
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "aws_account_id" {
+  description = "AWS account ID"
+  type        = string
+  default     = "055111817997"
+}
+
+variable "ecr_image_tag" {
+  description = "ECR image tag to deploy"
+  type        = string
+  default     = "latest"
+}
+
+variable "ecr_repository_url" {
+  description = "ECR repository URL"
+  type        = string
+  default     = "055111817997.dkr.ecr.us-east-1.amazonaws.com/app-one"
+}
+
+variable "app_two_target_group_arn" {
+  description = "App Two target group ARN for path-based routing"
+  type        = string
+  default     = ""
+}

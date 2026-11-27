@@ -1,37 +1,37 @@
 
 output "vpc_id" {
-  description = "Application VPC ID"
-  value       = module.vpc.vpc_id
-}
-
-output "public_subnet_ids" {
-  description = "Public subnet IDs"
-  value       = module.vpc.public_subnet_ids
-}
-
-output "private_subnet_ids" {
-  description = "Private subnet IDs"
-  value       = module.vpc.private_subnet_ids
-}
-
-output "ec2_instance_id" {
-  description = "EC2 instance ID"
-  value       = module.ec2.instance_id
-}
-
-output "ec2_public_ip" {
-  description = "EC2 public IP"
-  value       = module.ec2.public_ip
+  description = "Shared VPC ID (app-one VPC)"
+  value       = data.aws_vpc.app_one_vpc.id
 }
 
 output "alb_dns_name" {
-  description = "Application Load Balancer DNS name"
-  value       = module.alb.alb_dns_name
+  description = "Shared ALB DNS name"
+  value       = data.aws_lb.app_one_alb.dns_name
+}
+
+output "autoscaling_group_name" {
+  description = "Auto Scaling Group name"
+  value       = module.autoscale.autoscaling_group_name
 }
 
 output "rds_endpoint" {
   description = "PostgreSQL database endpoint"
   value       = module.rds.db_endpoint
+}
+
+output "rds_address" {
+  description = "RDS hostname"
+  value       = module.rds.db_address
+}
+
+output "rds_port" {
+  description = "RDS port"
+  value       = module.rds.db_port
+}
+
+output "rds_db_name" {
+  description = "Database name"
+  value       = module.rds.db_name
 }
 
 output "rds_secret_arn" {
@@ -47,4 +47,9 @@ output "s3_bucket_name" {
 output "ecr_repository_url" {
   description = "ECR repository URL"
   value       = module.ecr.repository_url
+}
+
+output "target_group_arn" {
+  description = "App-two target group ARN"
+  value       = aws_lb_target_group.app_two.arn
 }

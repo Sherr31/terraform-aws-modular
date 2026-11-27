@@ -96,7 +96,34 @@ module "ec2_security_group" {
   tags = var.tags
 }
 
-# EC2 Instance
+# --- App One Target Group (port 5000) ---
+
+resource "aws_lb_target_group" "app_one" {
+  name        = "${var.app_name}-tg"
+  port        = 5000
+  protocol    = "HTTP"
+  vpc_id      = module.vpc.vpc_id
+  target_type = "instance"
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    protocol            = "HTTP"
+    matcher             = "200-399"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    interval            = 30
+    timeout             = 5
+  }
+
+  tags = merge(var.tags, {
+    Name      = "${var.app_name}-tg"
+    ManagedBy = "Terraform"
+    Module    = "app-one"
+  })
+}
+
+# EC2 Instance (runs Docker container)
 module "ec2" {
   source = "../../modules/ec2"
 
@@ -112,16 +139,37 @@ module "ec2" {
   user_data = <<-EOF
     #!/bin/bash
     set -eux
+
+    # Install Docker
     apt-get update
-    apt-get install -y nginx
-    systemctl enable nginx
-    systemctl start nginx
+    apt-get install -y ca-certificates curl gnupg lsb-release
+
+    install -m 0755 -d /etc/docker
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/docker/keyrings/docker.gpg
+    chmod a+r /etc/docker/keyrings/docker.gpg
+
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/docker/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+    systemctl enable docker
+    systemctl start docker
+
+    # Login to ECR
+    aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com
+
+    # Pull and run App One
+    docker pull ${var.ecr_repository_url}:${var.ecr_image_tag}
+    docker stop app-one-container 2>/dev/null || true
+    docker rm app-one-container 2>/dev/null || true
+    docker run -d --name app-one-container --restart always -p 5000:5000 ${var.ecr_repository_url}:${var.ecr_image_tag}
   EOF
 
   tags = var.tags
 }
 
-# Application Load Balancer
+# Application Load Balancer with path-based routing
 module "alb" {
   source = "../../modules/alb"
 
@@ -131,17 +179,30 @@ module "alb" {
   subnet_ids         = module.vpc.public_subnet_ids
   security_group_ids = [module.alb_security_group.security_group_id]
 
-  target_port       = 80
-  health_check_path = "/"
+  target_port       = 5000
+  health_check_path = "/health"
+
+  path_rules = [
+    {
+      priority = 10
+      paths    = ["/app-one/*"]
+      target_group_arn = aws_lb_target_group.app_one.arn
+    },
+    {
+      priority = 20
+      paths    = ["/app-two/*"]
+      target_group_arn = var.app_two_target_group_arn
+    }
+  ]
 
   tags = var.tags
 }
 
 # Register EC2 with ALB Target Group
 resource "aws_lb_target_group_attachment" "ec2" {
-  target_group_arn = module.alb.target_group_arn
+  target_group_arn = aws_lb_target_group.app_one.arn
   target_id        = module.ec2.instance_id
-  port             = 80
+  port             = 5000
 }
 
 # S3 Bucket
