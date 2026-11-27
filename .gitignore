@@ -33,3 +33,4 @@ override.tf.json
 .idea/
 .DS_Store
 /apps/app-two/tfplan
+/apps/app-two/tfplan
