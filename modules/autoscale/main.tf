@@ -71,7 +71,11 @@ resource "aws_iam_role_policy" "ecr_read_only" {
     ]
   })
 }
-
+# Allow the EC2 instance to connect through AWS Systems Manager
+resource "aws_iam_role_policy_attachment" "ssm_managed_instance_core" {
+  role       = aws_iam_role.this.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
 # Instance profile to attach role to EC2
 resource "aws_iam_instance_profile" "this" {
   name = local.profile_name
@@ -120,9 +124,17 @@ resource "aws_launch_template" "this" {
     }
   }
 
-  user_data = var.user_data != null ? var.user_data : base64encode(<<-EOT
+ user_data = var.user_data != null ? var.user_data : base64encode(<<-EOT
     #!/bin/bash
     set -eux
+
+    # Install and start AWS Systems Manager Agent
+    if ! snap list amazon-ssm-agent >/dev/null 2>&1; then
+      snap install amazon-ssm-agent --classic
+    fi
+
+    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+    systemctl restart snap.amazon-ssm-agent.amazon-ssm-agent.service
 
     # Install Docker
     apt-get update
@@ -153,8 +165,7 @@ resource "aws_launch_template" "this" {
     # Enable HTTP traffic on port 5000
     ufw allow 5000/tcp || true
   EOT
-  )
-
+)
   tag_specifications {
     resource_type = "instance"
     tags = merge(var.tags, {
