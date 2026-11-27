@@ -30,7 +30,7 @@ resource "aws_db_instance" "this" {
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = var.vpc_security_group_ids
 
-  backup_retention_period = var.backup_retention_period
+  backup_retention_period = 1
   multi_az                = var.multi_az
 
   publicly_accessible = var.publicly_accessible
