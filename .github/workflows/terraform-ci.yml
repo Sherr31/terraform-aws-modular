@@ -46,7 +46,7 @@ jobs:
           - modules/rds
           - modules/alb
           - modules/ecr
-          - modules/autoscaling
+          # - modules/autoscaling
           - apps/app-one
           - apps/app-two
 
