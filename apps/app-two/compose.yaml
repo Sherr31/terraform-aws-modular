@@ -1,0 +1,16 @@
+services:
+  app-two:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-two
+    ports:
+      - "5002:5000"
+    environment:
+      APP_ENV: development
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: appdb
+      DB_USER: dbadmin
+      DB_PASSWORD: devpassword
+    restart: unless-stopped
