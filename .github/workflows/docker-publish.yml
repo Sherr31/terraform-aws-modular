@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Detect changed applications
         id: filter
@@ -67,10 +69,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./apps/app-one
+          file: ./apps/app-one/Dockerfile
           push: true
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/app-one:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/app-one:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -102,10 +104,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./apps/app-two
+          file: ./apps/app-two/Dockerfile
           push: true
           tags: |
             ${{ steps.login-ecr.outputs.registry }}/app-two:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/app-two:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
