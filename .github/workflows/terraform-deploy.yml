@@ -1,4 +1,4 @@
-name: Terraform Deploy
+name: Terraform Infrastructure
 
 on:
   workflow_dispatch:
@@ -11,8 +11,16 @@ on:
           - app-one
           - app-two
 
+      action:
+        description: Select infrastructure action
+        required: true
+        type: choice
+        options:
+          - deploy
+          - destroy
+
       confirm:
-        description: Select yes only when you want to deploy
+        description: Select yes to execute the planned action
         required: true
         type: choice
         options:
@@ -25,12 +33,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: terraform-deploy-${{ inputs.app }}
+  group: terraform-infrastructure-${{ inputs.app }}
   cancel-in-progress: false
 
 jobs:
   plan:
-    name: Generate Deployment Plan
+    name: Generate Terraform Plan
     runs-on: ubuntu-latest
     environment: terraform-deployment
 
@@ -52,13 +60,18 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::055111817997:role/github-actions-terraform-plan
           aws-region: us-east-1
-          role-session-name: GitHubActionsTerraformDeployPlan
+          role-session-name: GitHubActionsTerraformPlan
 
       - name: Initialize Terraform
         run: terraform init -input=false
 
-      - name: Generate saved plan
-        run: terraform plan -input=false -no-color -out=tfplan
+      - name: Generate deployment or destroy plan
+        run: |
+          if [ "${{ inputs.action }}" = "destroy" ]; then
+            terraform plan -destroy -input=false -no-color -out=tfplan
+          else
+            terraform plan -input=false -no-color -out=tfplan
+          fi
 
       - name: Upload saved plan
         uses: actions/upload-artifact@v4
@@ -68,8 +81,8 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  deploy:
-    name: Apply Terraform Plan
+  execute:
+    name: Execute Terraform Action
     runs-on: ubuntu-latest
     needs: plan
 
@@ -101,10 +114,10 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::055111817997:role/github-actions-terraform-deploy
           aws-region: us-east-1
-          role-session-name: GitHubActionsTerraformApply
+          role-session-name: GitHubActionsTerraformExecute
 
       - name: Initialize Terraform
         run: terraform init -input=false
 
-      - name: Apply saved plan
+      - name: Execute saved plan
         run: terraform apply -input=false -auto-approve tfplan

@@ -1,0 +1,11 @@
+services:
+  app-one:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: app-one
+    ports:
+      - "5001:5000"
+    environment:
+      APP_ENV: development
+    restart: unless-stopped

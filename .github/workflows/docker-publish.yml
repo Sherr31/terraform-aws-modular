@@ -1,0 +1,111 @@
+name: Build and Push Docker Images
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/app-one/**"
+      - "apps/app-two/**"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect-changes:
+    name: Detect Application Changes
+    runs-on: ubuntu-latest
+
+    outputs:
+      app-one: ${{ steps.filter.outputs.app-one }}
+      app-two: ${{ steps.filter.outputs.app-two }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect changed applications
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            app-one:
+              - 'apps/app-one/**'
+            app-two:
+              - 'apps/app-two/**'
+
+  build-app-one:
+    name: Build and Push App One
+    needs: detect-changes
+    if: needs.detect-changes.outputs.app-one == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::055111817997:role/github-actions-ecr-publisher
+          aws-region: us-east-1
+          role-session-name: GitHubActionsECRAppOne
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push App One
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/app-one
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/app-one:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/app-one:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-app-two:
+    name: Build and Push App Two
+    needs: detect-changes
+    if: needs.detect-changes.outputs.app-two == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::055111817997:role/github-actions-ecr-publisher
+          aws-region: us-east-1
+          role-session-name: GitHubActionsECRAppTwo
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push App Two
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/app-two
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/app-two:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/app-two:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
