@@ -184,13 +184,13 @@ module "alb" {
 
   path_rules = [
     {
-      priority = 10
-      paths    = ["/app-one/*"]
+      priority         = 10
+      paths            = ["/app-one/*"]
       target_group_arn = aws_lb_target_group.app_one.arn
     },
     {
-      priority = 20
-      paths    = ["/app-two/*"]
+      priority         = 20
+      paths            = ["/app-two/*"]
       target_group_arn = var.app_two_target_group_arn
     }
   ]

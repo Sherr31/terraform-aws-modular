@@ -56,9 +56,9 @@ variable "vpc_id" {
 variable "path_rules" {
   description = "Path-based routing rules for listener"
   type = list(object({
-    priority          = number
-    paths             = list(string)
-    target_group_arn  = string
+    priority         = number
+    paths            = list(string)
+    target_group_arn = string
   }))
   default = []
 }

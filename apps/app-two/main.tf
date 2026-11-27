@@ -109,12 +109,12 @@ module "app_security_group" {
 
   ingress_rules = [
     {
-      description    = "HTTP from ALB"
-      from_port      = 5000
-      to_port        = 5000
-      protocol       = "tcp"
-      cidr_blocks    = []
-      source_sg_id   = tolist(data.aws_lb.app_one_alb.security_groups)[0]
+      description  = "HTTP from ALB"
+      from_port    = 5000
+      to_port      = 5000
+      protocol     = "tcp"
+      cidr_blocks  = []
+      source_sg_id = tolist(data.aws_lb.app_one_alb.security_groups)[0]
     }
   ]
 
@@ -127,12 +127,12 @@ module "app_security_group" {
       cidr_blocks = ["0.0.0.0/0"]
     },
     {
-      description    = "PostgreSQL from RDS"
-      from_port      = 5432
-      to_port        = 5432
-      protocol       = "tcp"
-      cidr_blocks    = []
-      source_sg_id   = module.rds_security_group.security_group_id
+      description  = "PostgreSQL from RDS"
+      from_port    = 5432
+      to_port      = 5432
+      protocol     = "tcp"
+      cidr_blocks  = []
+      source_sg_id = module.rds_security_group.security_group_id
     }
   ]
 
@@ -185,16 +185,16 @@ module "autoscale" {
   subnet_ids         = data.aws_subnets.app_one_public.ids
   security_group_ids = [module.app_security_group.security_group_id]
 
-  ecr_registry_id    = module.ecr.registry_id
-  ecr_image_url      = module.ecr.repository_url
-  ecr_image_tag      = var.ecr_image_tag
-  aws_region         = "us-east-1"
+  ecr_registry_id = module.ecr.registry_id
+  ecr_image_url   = module.ecr.repository_url
+  ecr_image_tag   = var.ecr_image_tag
+  aws_region      = "us-east-1"
 
-  min_size          = 1
-  max_size          = 2
-  desired_capacity  = 1
+  min_size         = 1
+  max_size         = 2
+  desired_capacity = 1
 
-  target_group_arns = [aws_lb_target_group.app_two.arn]
+  target_group_arns   = [aws_lb_target_group.app_two.arn]
   enhanced_monitoring = true
 
   tags = var.tags

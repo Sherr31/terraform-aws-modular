@@ -46,7 +46,7 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
-    type             = "fixed-response"
+    type = "fixed-response"
     fixed_response {
       content_type = "text/plain"
       message_body = "Not Found"
@@ -60,7 +60,7 @@ resource "aws_lb_listener_rule" "path_rules" {
   for_each = { for idx, rule in var.path_rules : idx => rule }
 
   listener_arn = aws_lb_listener.http.arn
-  priority    = each.value.priority
+  priority     = each.value.priority
 
   action {
     type             = "forward"

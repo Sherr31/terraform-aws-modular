@@ -51,9 +51,9 @@ resource "aws_iam_role_policy" "ecr_read_only" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ECRAuth"
-        Effect = "Allow"
-        Action = "ecr:GetAuthorizationToken"
+        Sid      = "ECRAuth"
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
         Resource = "*"
       },
       {
@@ -176,19 +176,19 @@ resource "aws_autoscaling_group" "this" {
   name                = "${var.name}-asg"
   vpc_zone_identifier = var.subnet_ids
   target_group_arns   = var.target_group_arns
-  min_size           = var.min_size
-  max_size           = var.max_size
-  desired_capacity   = var.desired_capacity
+  min_size            = var.min_size
+  max_size            = var.max_size
+  desired_capacity    = var.desired_capacity
 
   launch_template {
     id      = aws_launch_template.this.id
     version = "$Latest"
   }
 
-  health_check_type            = "ELB"
-  health_check_grace_period    = 300
-  default_cooldown             = 300
-  wait_for_capacity_timeout    = "10m"
+  health_check_type         = "ELB"
+  health_check_grace_period = 300
+  default_cooldown          = 300
+  wait_for_capacity_timeout = "10m"
 
   suspended_processes = []
 
