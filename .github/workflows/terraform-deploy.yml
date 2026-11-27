@@ -36,10 +36,15 @@ concurrency:
   group: terraform-infrastructure-${{ inputs.app }}
   cancel-in-progress: false
 
+env:
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: true
+
 jobs:
   plan:
     name: Generate Terraform Plan
     runs-on: ubuntu-latest
+
     environment: terraform-deployment
 
     defaults:
@@ -59,19 +64,41 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::055111817997:role/github-actions-terraform-plan
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActionsTerraformPlan
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
 
       - name: Initialize Terraform
         run: terraform init -input=false
 
+      - name: Validate Terraform
+        run: terraform validate
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check -recursive ../../modules && terraform fmt -check -recursive .
+
       - name: Generate deployment or destroy plan
+        shell: bash
         run: |
+          set -euo pipefail
+
           if [ "${{ inputs.action }}" = "destroy" ]; then
-            terraform plan -destroy -input=false -no-color -out=tfplan
+            terraform plan \
+              -destroy \
+              -input=false \
+              -no-color \
+              -out=tfplan
           else
-            terraform plan -input=false -no-color -out=tfplan
+            terraform plan \
+              -input=false \
+              -no-color \
+              -out=tfplan
           fi
+
+      - name: Show plan summary
+        run: terraform show -no-color tfplan
 
       - name: Upload saved plan
         uses: actions/upload-artifact@v4
@@ -113,8 +140,11 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::055111817997:role/github-actions-terraform-deploy
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
           role-session-name: GitHubActionsTerraformExecute
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
 
       - name: Initialize Terraform
         run: terraform init -input=false
