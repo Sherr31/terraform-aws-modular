@@ -24,7 +24,9 @@ jobs:
   plan:
     name: Plan ${{ matrix.app }}
     runs-on: ubuntu-latest
-    environment: terraform-deployment
+
+    environment:
+      name: terraform-deployment
 
     strategy:
       fail-fast: false
@@ -50,8 +52,11 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::055111817997:role/github-actions-terraform-plan
-          aws-region: us-east-1
           role-session-name: GitHubActionsTerraformPlan
+          aws-region: us-east-1
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
 
       - name: Initialize Terraform
         run: terraform init -input=false
