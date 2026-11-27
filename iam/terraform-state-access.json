@@ -1,0 +1,41 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListTerraformStateBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning"
+      ],
+      "Resource": "arn:aws:s3:::terraform-aws-modular-state-sherry-2026",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "apps/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadAndWriteApplicationStates",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::terraform-aws-modular-state-sherry-2026/apps/*"
+    },
+    {
+      "Sid": "ManageTerraformStateLocks",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::terraform-aws-modular-state-sherry-2026/apps/*.tflock"
+    }
+  ]
+}
