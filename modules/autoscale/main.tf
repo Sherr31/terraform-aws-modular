@@ -21,11 +21,11 @@ data "aws_ami" "ubuntu" {
 
 # IAM Role for EC2 instances
 resource "aws_iam_role" "this" {
-  name               = var.instance_role_name
+  name               = local.role_name
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
 
   tags = merge(var.tags, {
-    Name      = var.instance_role_name
+    Name      = local.role_name
     ManagedBy = "Terraform"
     Module    = "autoscale"
   })
@@ -44,7 +44,7 @@ data "aws_iam_policy_document" "ec2_assume_role" {
 
 # Attach ECR read-only policy to the instance role
 resource "aws_iam_role_policy" "ecr_read_only" {
-  name = "${var.instance_role_name}-ecr-read-only"
+  name = "${local.role_name}-ecr-read-only"
   role = aws_iam_role.this.id
 
   policy = jsonencode({
@@ -70,17 +70,15 @@ resource "aws_iam_role_policy" "ecr_read_only" {
       }
     ]
   })
-
-
 }
 
 # Instance profile to attach role to EC2
 resource "aws_iam_instance_profile" "this" {
-  name = var.instance_profile_name
+  name = local.profile_name
   role = aws_iam_role.this.name
 
   tags = merge(var.tags, {
-    Name      = var.instance_profile_name
+    Name      = local.profile_name
     ManagedBy = "Terraform"
     Module    = "autoscale"
   })
@@ -93,7 +91,7 @@ resource "aws_launch_template" "this" {
   instance_type = var.instance_type
 
   iam_instance_profile {
-    name = aws_iam_instance_profile.this.name
+    name = local.profile_name
   }
 
   network_interfaces {

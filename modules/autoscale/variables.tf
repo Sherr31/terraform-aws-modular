@@ -58,6 +58,11 @@ variable "instance_role_name" {
   default     = null
 }
 
+locals {
+  role_name    = var.instance_role_name != null ? var.instance_role_name : "${var.name}-ecr-role"
+  profile_name = var.instance_profile_name != null ? var.instance_profile_name : "${var.name}-instance-profile"
+}
+
 variable "ecr_repository_arns" {
   description = "List of ECR repository ARNs for read-only access"
   type        = list(string)
